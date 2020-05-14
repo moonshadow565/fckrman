@@ -28,7 +28,10 @@ BundleDownloadList BundleDownloadList::from_file_info(FileInfo const& info) noex
     auto bundle_id = BundleID::None;
     ChunkDownload* chunk = {};
     auto chunk_id = ChunkID::None;
-    for(auto const& i: chunks) {
+    for(int j = 0; j < chunks.size(); j++) {
+
+        auto const& i = chunks[j];
+
         if (i.bundle_id != bundle_id) {
             bundle = bundles.emplace_back(std::make_unique<BundleDownload>()).get();
             bundle->id = i.bundle_id;
@@ -42,7 +45,16 @@ BundleDownloadList BundleDownloadList::from_file_info(FileInfo const& info) noex
             }
             bundle->range += std::to_string(i.compressed_offset);
             bundle->range += "-";
-            bundle->range += std::to_string(i.compressed_offset + i.compressed_size - 1);
+
+            auto end_range =  i.compressed_offset + i.compressed_size;
+            auto next_offset = chunks[j + 1].compressed_offset;
+            while(next_offset == end_range)
+            {
+                end_range = next_offset + chunks[j + 1].compressed_size;
+                next_offset = chunks[++j + 1].compressed_offset;
+            }
+
+            bundle->range += std::to_string(end_range - 1);
             bundle->total_size += (size_t)i.compressed_size;
             bundle->max_uncompressed = std::max(bundle->max_uncompressed,
                                                 (size_t)i.uncompressed_size);
