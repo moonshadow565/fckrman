@@ -105,6 +105,9 @@ void CLI::parse(int argc, char ** argv) {
     program.add_argument("-o", "--output")
             .help("Directory: to store and verify files from.")
             .default_value(std::string("."));
+    program.add_argument("-s", "--source")
+            .help("Directory: to source cached chunks from.")
+            .default_value(std::string{});
     program.add_argument("-d", "--download")
             .help("Url: to download from.")
             .default_value(std::string(DEFAULT_URL));
@@ -180,6 +183,7 @@ void CLI::parse(int argc, char ** argv) {
     path = program.get<std::optional<std::regex>>("-p");
     upgrade = program.get<std::string>("-u");
     output = program.get<std::string>("-o");
+    source_cache = program.get<std::string>("-s");
     download.prefix = clean_path(program.get<std::string>("-d"));
     download.archive = clean_path(program.get<std::string>("-a"));
     download.range_mode = program.get<RangeMode>("-m");
@@ -202,7 +206,9 @@ void CLI::parse(int argc, char ** argv) {
     } else {
         download.range_mode = RangeMode::Full;
     }
-
+    if (!source_cache.empty()) {
+        rman_assert(fs::exists(source_cache));
+    }
     if (!download.archive.empty()) {
         if (download.range_mode == RangeMode::Multi) {
             download.range_mode = RangeMode::One;

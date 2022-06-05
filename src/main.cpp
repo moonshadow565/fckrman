@@ -157,10 +157,16 @@ struct Main {
         }
     }
 
-    void download_file(FileInfo const& file) {
+    void download_file(FileInfo& file) {
         std::unique_ptr<std::ofstream> outfile = {};
         if (!cli.nowrite) {
             outfile = std::make_unique<std::ofstream>(file.create_file(cli.output));
+        }
+        if (!cli.source_cache.empty()) {
+            if (file.remove_cached(outfile.get(), cli.source_cache)) {
+                std::cout << "OK: " << file.path << std::endl;
+                return;
+            }
         }
         auto bundles = BundleDownloadList::from_file_info(file, cli.download);
         client->set_outfile(outfile.get());
