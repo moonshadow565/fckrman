@@ -1,14 +1,15 @@
 #ifndef RMAN_FILE_HPP
 #define RMAN_FILE_HPP
 #include "manifest.hpp"
-#include <vector>
+#include <filesystem>
+#include <fstream>
 #include <list>
-#include <string>
-#include <unordered_set>
 #include <optional>
 #include <regex>
-#include <fstream>
 #include <set>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace rman {
     template <typename T>
