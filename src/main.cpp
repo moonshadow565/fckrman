@@ -1,23 +1,29 @@
-#include "manifest.hpp"
-#include "file.hpp"
-#include "error.hpp"
+#include <atomic>
+#include <fstream>
+#include <future>
+#include <indicators/dynamic_progress.hpp>
+#include <indicators/progress_bar.hpp>
+#include <iostream>
+#include <mutex>
+#include <set>
+#include <thread>
+
 #include "cli.hpp"
 #include "download.hpp"
-#include <iostream>
-#include <fstream>
-#include <set>
+#include "error.hpp"
+#include "file.hpp"
+#include "manifest.hpp"
 
 using namespace rman;
+using namespace indicators;
 
 struct Main {
     CLI cli = {};
     FileList manifest = {};
     std::optional<FileList> upgrade = {};
-    std::unique_ptr<HttpClient> client = {};
+    DynamicProgress<ProgressBar> bars{};
 
-    void parse_args(int argc, char** argv) {
-        cli.parse(argc, argv);
-    }
+    void parse_args(int argc, char** argv) { cli.parse(argc, argv); }
 
     void parse_manifest() {
         rman_trace("Manifest file: %s", cli.manifest.c_str());
@@ -54,6 +60,9 @@ struct Main {
             break;
         case Action::Download:
             action_download();
+            break;
+        case Action::Download2:
+            action_download2();
             break;
         }
     }
@@ -142,56 +151,142 @@ struct Main {
     }
 
     void action_download() {
-        client = std::make_unique<HttpClient>(cli.download);
+        auto client = std::make_unique<HttpClient>(cli.download);
         for (auto& file: manifest.files) {
+            ProgressBar bar{option::BarWidth{50},
+                            option::ForegroundColor{Color::cyan},
+                            option::ShowElapsedTime{true},
+                            option::ShowRemainingTime{true},
+                            option::PostfixText{"FILE: " + file.path},
+                            option::PrefixText{"START!"}};
+            bar.print_progress();
+
             if (cli.exist && file.remove_exist(cli.output)) {
-                std::cout << "SKIP: " << file.path << std::endl;
+                bar.set_option(option::PrefixText{"SKIP! "});
+                bar.mark_as_completed();
                 continue;
             }
             if (cli.verify && file.remove_verified(cli.output)) {
-                std::cout << "OK: " << file.path << std::endl;
+                bar.set_option(option::PrefixText{"OK!   "});
+                bar.mark_as_completed();
                 continue;
             }
-            std::cout << "START: " << file.path << std::endl;
-            download_file(file);
+
+            auto filedl = FileDownload::make(file, cli.download, cli.nowrite ? "" : cli.output);
+            auto queued = std::move(filedl->bundles);
+            auto failed = BundleDownloadList{};
+
+            bar.set_option(option::MinProgress{0});
+            bar.set_option(option::MaxProgress{queued.size()});
+            filedl->update = [&](bool is_good, std::unique_ptr<BundleDownload> bundle) {
+                if (is_good) {
+                    bar.tick();
+                    bundle.reset();
+                } else {
+                    failed.push_back(std::move(bundle));
+                }
+            };
+
+            for (uint32_t tried = 0; !queued.empty() && tried <= cli.download.retry; tried++) {
+                bar.set_option(option::PrefixText{"TRY #" + std::to_string(tried)});
+                bar.print_progress();
+                while (!queued.empty() || !client->finished()) {
+                    client->push(queued);
+                    client->perform();
+                    client->poll(100);
+                }
+                queued.splice(queued.end(), failed);
+            }
+
+            bar.set_option(option::PrefixText{failed.empty() ? "OK!   " : "ERROR!"});
+            bar.mark_as_completed();
         }
     }
 
-    void download_file(FileInfo& file) {
-        std::unique_ptr<std::ofstream> outfile = {};
-        if (!cli.nowrite) {
-            outfile = std::make_unique<std::ofstream>(file.create_file(cli.output));
-        }
-        if (!cli.source_cache.empty()) {
-            if (file.remove_cached(outfile.get(), cli.source_cache)) {
-                std::cout << "OK: " << file.path << std::endl;
-                return;
-            }
-        }
-        auto bundles = BundleDownloadList::from_file_info(file, cli.download);
-        client->set_outfile(outfile.get());
-        size_t total = bundles.unfinished.size();
-        for (uint32_t tried = 0; !bundles.unfinished.empty() && tried <= cli.download.retry; tried++) {
-            std::cout << '\r'
-                      << "Try: " << tried << ' '
-                      << "Bundles: " << bundles.good.size()
-                      << '/' << total << std::flush;
-            bundles.queued = std::move(bundles.unfinished);
-            for(;;) {
-                client->push(bundles);
-                client->perform();
-                client->pop(bundles);
-                std::cout << '\r'
-                          << "Try: " << tried << ' '
-                          << "Bundles: " << bundles.good.size()
-                          << '/' << total << std::flush;
-                if (client->finished() && bundles.queued.empty()) {
-                    break;
+    void action_download2() {
+        bars.set_option(option::HideBarWhenComplete{false});
+        auto client = std::make_unique<HttpClient>(cli.download);
+
+        std::mutex mutex{};
+        std::condition_variable cond{};
+        BundleDownloadList queue_send{};
+        enum class State {
+            Produced,
+            Consumed,
+            Finished,
+        } state = {};
+
+        std::thread thread{[&, this] {
+            BundleDownloadList queue{};
+            for (bool running = true; running || !client->finished() || !queue.empty();) {
+                if (running && queue.size() <= client->canpush()) {
+                    std::unique_lock lock(mutex);
+                    cond.wait(lock, [&, this] { return state != State::Consumed; });
+                    if (state == State::Finished) {
+                        running = false;
+                    }
+                    queue.splice(queue.end(), queue_send);
+                    state = State::Consumed;
+                    lock.unlock();
+                    cond.notify_one();
                 }
-                client->poll(100);
+                client->push(queue);
+                client->perform();
+                client->poll(50);
             }
+        }};
+
+        for (auto& file : manifest.files) {
+            std::unique_lock lockk(mutex);
+            cond.wait(lockk, [&, this] { return state == State::Consumed; });
+            auto bar = new ProgressBar(option::BarWidth{50},
+                                       option::ForegroundColor{Color::cyan},
+                                       option::PostfixText{file.path},
+                                       option::PrefixText{"START!"});
+            auto b = bars.push_back(*bar);
+
+            if (cli.exist && file.remove_exist(cli.output)) {
+                bars[b].set_option(option::PrefixText{"SKIP! "});
+                bars[b].mark_as_completed();
+                continue;
+            }
+            if (cli.verify && file.remove_verified(cli.output)) {
+                bars[b].set_option(option::PrefixText{"OK!   "});
+                bars[b].mark_as_completed();
+                continue;
+            }
+            auto filedl = FileDownload::make(file, cli.download, cli.nowrite ? "" : cli.output);
+            auto  failed = std::make_shared<bool>(false);
+            filedl->update = [this, b, failed](bool is_good, std::unique_ptr<BundleDownload> bundle) {
+                if (is_good) {
+                    bars[b].tick();
+                } else {
+                    *failed = true;
+                }
+                if (bundle->file.use_count() == 1) {
+                    bars[b].set_option(option::PrefixText{!*failed ? "OK!   " : "ERROR!"});
+                    bars[b].mark_as_completed();
+                }
+                bundle.reset();
+            };
+            bars[b].set_option(option::MinProgress{0});
+            bars[b].set_option(option::MaxProgress{filedl->bundles.size()});
+            bars[b].set_option(option::PrefixText{"DL    "});
+            bars[b].print_progress();
+            queue_send = std::move(filedl->bundles);
+            state = State::Produced;
+            lockk.unlock();
+            cond.notify_one();
         }
-        std::cout << ' ' << (bundles.unfinished.empty() ? "OK!" : "ERROR!") << std::endl;
+        // Signal no more
+        {
+            std::unique_lock lock(mutex);
+            cond.wait(lock, [&, this] { return state == State::Consumed; });
+            state = State::Finished;
+            lock.unlock();
+            cond.notify_one();
+        }
+        thread.join();
     }
 
     static std::vector<char> read_file(std::string const& filename) {

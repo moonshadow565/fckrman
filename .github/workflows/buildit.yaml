@@ -1,0 +1,24 @@
+name: BuildIt
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+    - name: "Setup msvc"
+      uses: ilammy/msvc-dev-cmd@v1
+    - name: "Clone source"
+      uses: actions/checkout@v2
+    - name: "Build"
+      run: |
+        Rename-Item -LiteralPath "C:\\Strawberry" -NewName "C:\\fuckyou"
+        mkdir build
+        cd build
+        cmake -G "NMake Makefiles" "-DCMAKE_BUILD_TYPE:STRING=Release" ..
+        cmake --build .
+    - name: 'Upload Artifact'
+      uses: actions/upload-artifact@v2
+      with:
+        name: build/fckrman.exe
+        path: build/fckrman.exe
+        retention-days: 15

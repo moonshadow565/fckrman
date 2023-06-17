@@ -15,6 +15,7 @@ namespace rman {
         std::vector<uint32_t> offsets = {};
     };
 
+    struct FileDownload;
     struct BundleDownload {
         BundleID id = {};
         std::vector<ChunkDownload> chunks = {};
@@ -25,18 +26,23 @@ namespace rman {
         size_t offset_count = {};
         size_t max_uncompressed = {};
         RangeMode range_mode = {};
+        std::shared_ptr<FileDownload> file;
 
         bool can_simplify() const noexcept;
 
         bool max_range() const noexcept;
     };
 
-    struct BundleDownloadList {
-        std::vector<std::unique_ptr<BundleDownload>> unfinished = {};
-        std::vector<std::unique_ptr<BundleDownload>> good = {};
-        std::vector<std::unique_ptr<BundleDownload>> queued = {};
+    using BundleDownloadList = std::list<std::unique_ptr<BundleDownload>>;
 
-        static BundleDownloadList from_file_info(FileInfo const& info, DownloadOpts const& opts);
+    struct FileDownload {
+        BundleDownloadList bundles{};
+        std::function<void(bool good, std::unique_ptr<BundleDownload> bundle)> update;
+        std::unique_ptr<std::ofstream> outfile;
+
+        static std::shared_ptr<FileDownload> make(FileInfo const& info,
+                                                  DownloadOpts const& opts,
+                                                  std::string outfolder);
     };
 
     enum class HttpState {
@@ -56,13 +62,7 @@ namespace rman {
         HttpConnection& operator=(HttpConnection&& other) = delete;
         ~HttpConnection() noexcept;
 
-        inline void set_file(std::ofstream* file) noexcept {
-            outfile_ = file;
-        }
-
-        inline void* get_handle() const noexcept {
-            return handle_;
-        }
+        inline void* get_handle() const noexcept { return handle_; }
 
         void give_bundle(std::unique_ptr<BundleDownload> bundle);
 
@@ -80,7 +80,6 @@ namespace rman {
         HttpState state_ = {};
         std::unique_ptr<BundleDownload> bundle_ = {};
         size_t chunk_ = {};
-        std::ofstream* outfile_ = {};
         std::size_t range_pos_ = {};
         RangeMode range_mode_ = {};
         std::unique_ptr<std::ofstream> archivefile_ = {};
@@ -102,15 +101,13 @@ namespace rman {
         HttpClient& operator=(HttpClient&& other) = delete;
         ~HttpClient() noexcept;
 
-        inline bool finished() const noexcept {
-            return inprogress_.size() == 0;
-        }
+        inline bool finished() const noexcept { return inprogress_.size() == 0; }
 
-        void set_outfile(std::ofstream* file) noexcept;
-        void pop(BundleDownloadList& list);
-        void push(BundleDownloadList& list);
+        std::size_t canpush() { return !free_.size(); }
+        void push(BundleDownloadList& queued);
         void perform();
         void poll(int timeout);
+
     private:
         void* handle_ = {};
         std::vector<std::unique_ptr<HttpConnection>> connections_ = {};

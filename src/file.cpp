@@ -430,33 +430,6 @@ bool FileInfo::remove_verified(std::string const& folder_name) noexcept {
     return true;
 }
 
-bool FileInfo::remove_cached(std::ofstream* outfile, fs::path const& cache_source) noexcept {
-    if (params.hash_type == HashType::None) {
-        return false;
-    }
-    thread_local std::vector<char> buffer;
-    std::optional<ChunkID> last_chunk;
-    remove_if(chunks, [&, outfile] (FileChunk const& chunk) -> bool {
-        if (last_chunk != chunk.id) {
-            last_chunk = std::nullopt;
-            buffer.resize((size_t)chunk.uncompressed_size);
-            auto path = cache_source / (std::string(to_hex(chunk.id)) + ".chunk");
-            std::ifstream infile(path, std::ios::binary);
-            if (!infile) {
-                return false;
-            }
-            if (!infile.read(buffer.data(), buffer.size())) {
-                return false;
-            }
-            last_chunk = chunk.id;
-        }
-        outfile->seekp(chunk.uncompressed_offset);
-        outfile->write(buffer.data(), buffer.size());
-        return true;
-    });
-    return chunks.empty();
-}
-
 bool FileInfo::is_uptodate(FileInfo const& old_file) const noexcept {
     if (id == old_file.id) {
         return true;

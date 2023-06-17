@@ -14,6 +14,9 @@ if (NOT CURL_FOUND)
   set(BUILD_CURL_EXE OFF CACHE INTERNAL "Dont need")
   set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "Dont need")
   set(BUILD_TESTING OFF CACHE INTERNAL "Dont need")
+  set(USE_ZLIB OFF CACHE INTERNAL "Dont need")
+  set(CURL_USE_LIBSSH OFF CACHE INTERNAL "Dont need")
+  set(CURL_USE_LIBSSH2 OFF CACHE INTERNAL "Dont need")
   set(CURL_DISABLE_DICT ON CACHE INTERNAL "Dont need")
   set(CURL_DISABLE_GOPHER ON CACHE INTERNAL "Dont need")
   set(CURL_DISABLE_IMAP ON CACHE INTERNAL "Dont need")
@@ -78,6 +81,13 @@ if(NOT zstd_POPULATED)
     endif()
 endif()
 
+
+FetchContent_Declare(
+    indicators
+    URL https://github.com/p-ranav/indicators/archive/26d39ad8fb438f5f50fb16427f554045d8431030.zip
+)
+FetchContent_MakeAvailable(indicators)
+
 add_executable(fckrman
     include/fltbf.hpp
     include/json.hpp
@@ -95,6 +105,6 @@ add_executable(fckrman
     src/manifest.cpp
     src/main.cpp
 )
-target_link_libraries(fckrman PRIVATE argparse zstd Threads::Threads)
+target_link_libraries(fckrman PRIVATE argparse zstd indicators Threads::Threads)
 target_include_directories(fckrman PRIVATE include/)
 target_link_libraries(fckrman PRIVATE CURL::libcurl)

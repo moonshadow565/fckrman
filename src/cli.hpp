@@ -13,6 +13,7 @@ namespace rman {
         ListChunks,
         Json,
         Download,
+        Download2,
     };
 
     struct CLI {
@@ -25,7 +26,6 @@ namespace rman {
         std::vector<std::string> langs = {};
         std::string upgrade = {};
         std::string output = {};
-        std::string source_cache = {};
         DownloadOpts download = {};
 
         void parse(int argc, char ** argv);
