@@ -39,10 +39,13 @@ namespace rman {
         BundleDownloadList bundles{};
         std::function<void(bool good, std::unique_ptr<BundleDownload> bundle)> update;
         std::unique_ptr<std::ofstream> outfile;
+        std::string outname;
 
         static std::shared_ptr<FileDownload> make(FileInfo const& info,
                                                   DownloadOpts const& opts,
                                                   std::string outfolder);
+
+        bool write(std::vector<uint32_t> const& offsets, char const* data, std::size_t size);
     };
 
     enum class HttpState {

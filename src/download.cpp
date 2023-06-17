@@ -322,11 +322,8 @@ bool HttpConnection::decompress(const char *data) const noexcept {
     if (ZSTD_isError(result) || result != outbuffer_.size()) {
         return false;
     }
-    if (auto outfile = bundle_->file->outfile.get()) {
-        for (auto offset: chunk.offsets) {
-            outfile->seekp(offset);
-            outfile->write(outbuffer_.data(), (std::streamsize)outbuffer_.size());
-        }
+    if (!bundle_->file->write(chunk.offsets, outbuffer_.data(), outbuffer_.size())) {
+        return false;
     }
     return true;
 }
@@ -401,3 +398,12 @@ void HttpClient::poll(int timeout) {
     rman_assert(curl_multi_wait(handle_, nullptr, 0, timeout, &numfds) == CURLM_OK);
 }
 
+bool FileDownload::write(std::vector<uint32_t> const& offsets, char const* data, std::size_t size) {
+    if (outfile) {
+        for (auto offset: offsets) {
+            outfile->seekp(offset);
+            outfile->write(data, (std::streamsize)size);
+        }
+    }
+    return true;
+}

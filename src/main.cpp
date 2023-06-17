@@ -221,24 +221,23 @@ struct Main {
             for (bool running = true; running || !client->finished() || !queue.empty();) {
                 if (running && queue.size() <= client->canpush()) {
                     std::unique_lock lock(mutex);
-                    cond.wait(lock, [&, this] { return state != State::Consumed; });
-                    if (state == State::Finished) {
-                        running = false;
+                    if (cond.wait_for(lock, std::chrono::milliseconds{10}, [&, this] { return state != State::Consumed; })) {
+                        if (state == State::Finished) {
+                            running = false;
+                        }
+                        queue.splice(queue.end(), queue_send);
+                        state = State::Consumed;
+                        lock.unlock();
+                        cond.notify_one();
                     }
-                    queue.splice(queue.end(), queue_send);
-                    state = State::Consumed;
-                    lock.unlock();
-                    cond.notify_one();
                 }
                 client->push(queue);
                 client->perform();
-                client->poll(50);
+                client->poll(1);
             }
         }};
 
         for (auto& file : manifest.files) {
-            std::unique_lock lockk(mutex);
-            cond.wait(lockk, [&, this] { return state == State::Consumed; });
             auto bar = new ProgressBar(option::BarWidth{50},
                                        option::ForegroundColor{Color::cyan},
                                        option::PostfixText{file.path},
@@ -273,6 +272,8 @@ struct Main {
             bars[b].set_option(option::MaxProgress{filedl->bundles.size()});
             bars[b].set_option(option::PrefixText{"DL    "});
             bars[b].print_progress();
+            std::unique_lock lockk(mutex);
+            cond.wait(lockk, [&, this] { return state == State::Consumed; });
             queue_send = std::move(filedl->bundles);
             state = State::Produced;
             lockk.unlock();
