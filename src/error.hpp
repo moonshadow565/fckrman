@@ -1,6 +1,7 @@
 #ifndef RMAN_ERROR_HPP
 #define RMAN_ERROR_HPP
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
